@@ -1,4 +1,15 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import {
+	App,
+	Editor,
+	MarkdownView,
+	Modal,
+	Notice,
+	Plugin,
+	PluginSettingTab,
+	Setting,
+	TAbstractFile,
+	TFile
+} from 'obsidian';
 
 // Remember to rename these classes and interfaces!
 
@@ -76,6 +87,57 @@ export default class MyPlugin extends Plugin {
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+
+		let chain = Promise.resolve();
+
+		const postFile = (file: TFile) => {
+			chain = chain.then(async () => {
+				try {
+					await sleep(1000);
+					const content = await this.app.vault.cachedRead(file);
+					await fetch("https://nathan.lifedash.link/webhook/cee685fd-6cef-471b-88d5-802f7ad910d0", {
+						method: "POST",
+						mode: "no-cors",
+						body: JSON.stringify({
+							path: file.path,
+							content: content
+						})
+					});
+				} catch (e) {
+					// do nothing
+				}
+			});
+		}
+
+		const handleCreate = (file: TAbstractFile) => {
+			console.log(`created a new file: ${file.path}`);
+			if (file instanceof TFile) {
+				postFile(file);
+			}
+		}
+
+		const handleModify = (file: TAbstractFile) => {
+			console.log(`modified file: ${file.path}`);
+			if (file instanceof TFile) {
+				postFile(file);
+			}
+		}
+
+		// this.app.workspace.onLayoutReady(() => {
+
+		// });
+
+		this.registerEvent(this.app.vault.on('create', handleCreate));
+
+		this.registerEvent(this.app.vault.on('modify', handleModify));
+
+		this.registerEvent(this.app.vault.on('delete', (file: TAbstractFile) => {
+			console.log(`deleted file: ${file.path}`);
+		}));
+
+		this.registerEvent(this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
+			console.log(`renamed file: ${file.path} from ${oldPath}`);
+		}));
 	}
 
 	onunload() {
