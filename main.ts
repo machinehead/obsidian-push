@@ -3,13 +3,14 @@ import {
 	Editor,
 	MarkdownView,
 	Modal,
+	normalizePath,
 	Notice,
 	Plugin,
 	PluginSettingTab,
 	Setting,
 	TAbstractFile,
-	TFile
-} from 'obsidian';
+	TFile,
+} from "obsidian";
 
 // Remember to rename these classes and interfaces!
 
@@ -18,14 +19,16 @@ interface MyPluginSettings {
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
+	mySetting: "default",
+};
 
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
+	maxTimestamp: number;
 
 	async onload() {
 		await this.loadSettings();
+		this.maxTimestamp = await this.loadTimestamp();
 
 		// // This creates an icon in the left ribbon.
 		// const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
@@ -103,56 +106,124 @@ export default class MyPlugin extends Plugin {
 						mode: "no-cors",
 						body: JSON.stringify({
 							path: file.path,
-							content: content
-						})
+							content: content,
+						}),
 					});
 				} catch (e) {
 					// do nothing
 				}
 			});
-		}
+		};
 
 		const handleCreate = (file: TAbstractFile) => {
 			console.log(`created a new file: ${file.path}`);
 			if (file instanceof TFile) {
 				postFile(file);
+				this.updateTimestamp(file.stat.mtime);
 			}
-		}
+		};
 
 		const handleModify = (file: TAbstractFile) => {
 			console.log(`modified file: ${file.path}`);
-			if (file instanceof TFile) {
+			if (file instanceof TFile && file.stat.mtime > this.maxTimestamp) {
 				postFile(file);
+				this.updateTimestamp(file.stat.mtime);
 			}
-		}
+		};
 
 		// this.app.workspace.onLayoutReady(() => {
 
 		// });
 
-		this.registerEvent(this.app.vault.on('create', handleCreate));
+		this.registerEvent(this.app.vault.on("create", handleCreate));
 
-		this.registerEvent(this.app.vault.on('modify', handleModify));
+		this.registerEvent(this.app.vault.on("modify", handleModify));
 
-		this.registerEvent(this.app.vault.on('delete', (file: TAbstractFile) => {
-			console.log(`deleted file: ${file.path}`);
-		}));
+		this.registerEvent(
+			this.app.vault.on("delete", (file: TAbstractFile) => {
+				console.log(`deleted file: ${file.path}`);
+			}),
+		);
 
-		this.registerEvent(this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
-			console.log(`renamed file: ${file.path} from ${oldPath}`);
-		}));
+		this.registerEvent(
+			this.app.vault.on(
+				"rename",
+				(file: TAbstractFile, oldPath: string) => {
+					console.log(`renamed file: ${file.path} from ${oldPath}`);
+				},
+			),
+		);
 	}
 
-	onunload() {
-
+	private async loadTimestamp() {
+		const jsonContents = await this.loadFile("timestamp.json");
+		if (jsonContents) {
+			// TODO: zod
+			const data = JSON.parse(jsonContents);
+			console.log(data);
+			return data.timestamp;
+		}
+		return 0;
 	}
+
+	onunload() {}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			await this.loadData(),
+		);
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	async storeFile(fileName: string, content: string) {
+		// Store a file in the plugin's folder
+
+		// Get the plugin's folder path
+		const pluginFolderPath = normalizePath(
+			this.app.vault.configDir + "/plugins/" + this.manifest.id,
+		);
+
+		// Ensure the plugin folder exists
+		await this.app.vault.adapter.mkdir(pluginFolderPath);
+
+		// Create the file path
+		const filePath = normalizePath(pluginFolderPath + "/" + fileName);
+
+		// Write the file
+		await this.app.vault.adapter.write(filePath, content);
+	}
+
+	async loadFile(fileName: string) {
+		// Load a file from the plugin's folder
+
+		// Get the plugin's folder path
+		const pluginFolderPath = normalizePath(
+			this.app.vault.configDir + "/plugins/" + this.manifest.id,
+		);
+
+		// Create the file path
+		const filePath = normalizePath(pluginFolderPath + "/" + fileName);
+
+		if (!(await this.app.vault.adapter.exists(filePath))) {
+			// File doesn't exist
+			return;
+		}
+
+		// Read the file
+		return this.app.vault.adapter.read(filePath);
+	}
+
+	async updateTimestamp(mtime: number) {
+		this.maxTimestamp = Math.max(this.maxTimestamp, mtime);
+		await this.storeFile(
+			"timestamp.json",
+			JSON.stringify({ timestamp: this.maxTimestamp }),
+		);
 	}
 }
 
