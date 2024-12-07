@@ -101,12 +101,16 @@ export default class MyPlugin extends Plugin {
 				try {
 					await sleep(1000);
 					const content = await this.app.vault.cachedRead(file);
+					// TODO: maybe get maxTimestamp from server
 					await fetch("https://api2.lifedash.link/webhook/obsidian", {
 						method: "POST",
 						mode: "no-cors",
 						body: JSON.stringify({
 							path: file.path,
 							content: content,
+							ctime: file.stat.ctime,
+							mtime: file.stat.mtime,
+							vault: this.app.vault.getName(),
 						}),
 					});
 				} catch (e) {
@@ -124,15 +128,18 @@ export default class MyPlugin extends Plugin {
 		};
 
 		const handleModify = (file: TAbstractFile) => {
+			// TODO: note this also gets called when a file is created
 			console.log(`modified file: ${file.path}`);
-			if (file instanceof TFile && file.stat.mtime > this.maxTimestamp) {
+			// TODO: reenable once ensured maxTimestamp is correct
+			//  && file.stat.mtime > this.maxTimestamp
+			if (file instanceof TFile) {
 				postFile(file);
 				this.updateTimestamp(file.stat.mtime);
 			}
 		};
 
 		// this.app.workspace.onLayoutReady(() => {
-
+		//
 		// });
 
 		this.registerEvent(this.app.vault.on("create", handleCreate));
@@ -142,6 +149,7 @@ export default class MyPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on("delete", (file: TAbstractFile) => {
 				console.log(`deleted file: ${file.path}`);
+				// TODO: send to server
 			}),
 		);
 
@@ -150,12 +158,14 @@ export default class MyPlugin extends Plugin {
 				"rename",
 				(file: TAbstractFile, oldPath: string) => {
 					console.log(`renamed file: ${file.path} from ${oldPath}`);
+					// TODO: send to server
 				},
 			),
 		);
 	}
 
 	private async loadTimestamp() {
+		// TODO: subfolder like "data"
 		const jsonContents = await this.loadFile("timestamp.json");
 		if (jsonContents) {
 			// TODO: zod
