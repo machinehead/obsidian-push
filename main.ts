@@ -1,16 +1,5 @@
-import {
-	App,
-	Editor,
-	MarkdownView,
-	Modal,
-	normalizePath,
-	Notice,
-	Plugin,
-	PluginSettingTab,
-	Setting,
-	TAbstractFile,
-	TFile,
-} from "obsidian";
+import { normalizePath, Plugin, TAbstractFile, TFile } from "obsidian";
+import { MinHeap } from "@datastructures-js/heap";
 
 // Remember to rename these classes and interfaces!
 
@@ -22,8 +11,16 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
 	mySetting: "default",
 };
 
+interface IFileEvent {
+	file: TFile;
+	event_name: string;
+}
+
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
+	fileHeap: MinHeap<IFileEvent> = new MinHeap<IFileEvent>(
+		(e) => e.file.stat.mtime,
+	);
 	maxTimestamp: number;
 
 	async onload() {
@@ -91,56 +88,23 @@ export default class MyPlugin extends Plugin {
 		// // When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		// this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
 
-		let chain = Promise.resolve();
-
-		const postFile = (file: TFile, event_name: string) => {
-			if (file.extension !== "md") {
-				return;
-			}
-			chain = chain.then(async () => {
-				try {
-					await sleep(1000);
-					const content = await this.app.vault.cachedRead(file);
-					// TODO: maybe get maxTimestamp from server
-					await fetch("https://api2.lifedash.link/webhook/obsidian", {
-						method: "POST",
-						mode: "no-cors",
-						body: JSON.stringify({
-							path: file.path,
-							content: content,
-							ctime: file.stat.ctime,
-							mtime: file.stat.mtime,
-							vault: this.app.vault.getName(),
-							event_name: event_name,
-						}),
-					});
-				} catch (e) {
-					// do nothing
-				}
-			});
-		};
-
 		const handleCreate = (file: TAbstractFile) => {
 			console.log(`created a new file: ${file.path}`);
 			if (file instanceof TFile) {
-				postFile(file, "create");
-				this.updateTimestamp(file.stat.mtime);
+				this.fileHeap.insert({ file, event_name: "create" });
 			}
 		};
 
 		const handleModify = (file: TAbstractFile) => {
-			// TODO: note this also gets called when a file is created
+			// note this also gets called when a file is created
 			console.log(`modified file: ${file.path}`);
-			// TODO: reenable once ensured maxTimestamp is correct
-			//  && file.stat.mtime > this.maxTimestamp
 			if (file instanceof TFile) {
-				postFile(file, "modify");
-				this.updateTimestamp(file.stat.mtime);
+				this.fileHeap.insert({ file, event_name: "modify" });
 			}
 		};
 
 		this.app.workspace.onLayoutReady(() => {
-			// TODO: at this point we can assume all files are loaded
+			this.postFileLoop();
 		});
 
 		this.registerEvent(this.app.vault.on("create", handleCreate));
@@ -163,6 +127,46 @@ export default class MyPlugin extends Plugin {
 				},
 			),
 		);
+	}
+
+	async postFileLoop() {
+		// eslint-disable-next-line no-constant-condition
+		while (true) {
+			const fileEvent = this.fileHeap.pop();
+			if (fileEvent) {
+				const { file, event_name } = fileEvent;
+				if (file.stat.mtime >= this.maxTimestamp) {
+					await this.postFile(file, event_name);
+					await this.updateTimestamp(file.stat.mtime);
+				}
+			} else {
+				await sleep(1000);
+			}
+		}
+	}
+
+	async postFile(file: TFile, event_name: string) {
+		if (file.extension !== "md") {
+			return;
+		}
+		try {
+			const content = await this.app.vault.cachedRead(file);
+			// TODO: maybe get maxTimestamp from server
+			await fetch("https://api2.lifedash.link/webhook/obsidian", {
+				method: "POST",
+				mode: "no-cors",
+				body: JSON.stringify({
+					path: file.path,
+					content: content,
+					ctime: file.stat.ctime,
+					mtime: file.stat.mtime,
+					vault: this.app.vault.getName(),
+					event_name: event_name,
+				}),
+			});
+		} catch (e) {
+			// do nothing
+		}
 	}
 
 	private async loadTimestamp() {
@@ -233,7 +237,7 @@ export default class MyPlugin extends Plugin {
 		this.maxTimestamp = Math.max(this.maxTimestamp, mtime);
 		await this.storeFile(
 			"timestamp.json",
-			JSON.stringify({ timestamp: this.maxTimestamp }),
+			JSON.stringify({ timestamp: this.maxTimestamp + 1 }),
 		);
 	}
 }

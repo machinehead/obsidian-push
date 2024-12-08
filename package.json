@@ -27,5 +27,8 @@
 	},
 	"lint-staged": {
 		"**/*": "prettier --write --ignore-unknown"
+	},
+	"dependencies": {
+		"@datastructures-js/heap": "^4.3.3"
 	}
 }
