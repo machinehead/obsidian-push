@@ -93,7 +93,7 @@ export default class MyPlugin extends Plugin {
 
 		let chain = Promise.resolve();
 
-		const postFile = (file: TFile) => {
+		const postFile = (file: TFile, event_name: string) => {
 			if (file.extension !== "md") {
 				return;
 			}
@@ -111,6 +111,7 @@ export default class MyPlugin extends Plugin {
 							ctime: file.stat.ctime,
 							mtime: file.stat.mtime,
 							vault: this.app.vault.getName(),
+							event_name: event_name,
 						}),
 					});
 				} catch (e) {
@@ -122,7 +123,7 @@ export default class MyPlugin extends Plugin {
 		const handleCreate = (file: TAbstractFile) => {
 			console.log(`created a new file: ${file.path}`);
 			if (file instanceof TFile) {
-				postFile(file);
+				postFile(file, "create");
 				this.updateTimestamp(file.stat.mtime);
 			}
 		};
@@ -133,14 +134,14 @@ export default class MyPlugin extends Plugin {
 			// TODO: reenable once ensured maxTimestamp is correct
 			//  && file.stat.mtime > this.maxTimestamp
 			if (file instanceof TFile) {
-				postFile(file);
+				postFile(file, "modify");
 				this.updateTimestamp(file.stat.mtime);
 			}
 		};
 
-		// this.app.workspace.onLayoutReady(() => {
-		//
-		// });
+		this.app.workspace.onLayoutReady(() => {
+			// TODO: at this point we can assume all files are loaded
+		});
 
 		this.registerEvent(this.app.vault.on("create", handleCreate));
 
