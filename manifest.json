@@ -1,7 +1,7 @@
 {
 	"id": "obsidian-push",
 	"name": "Obsidian Push",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "0.15.0",
 	"description": "This is an Obsidian plugin pushing updates into lifedash.link",
 	"author": "machinehead",

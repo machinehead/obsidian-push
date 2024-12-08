@@ -1,15 +1,5 @@
-import {
-	App,
-	Editor,
-	MarkdownView,
-	Modal,
-	Notice,
-	Plugin,
-	PluginSettingTab,
-	Setting,
-	TAbstractFile,
-	TFile
-} from 'obsidian';
+import { normalizePath, Plugin, TAbstractFile, TFile } from "obsidian";
+import { MinHeap } from "@datastructures-js/heap";
 
 // Remember to rename these classes and interfaces!
 
@@ -18,14 +8,24 @@ interface MyPluginSettings {
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+	mySetting: "default",
+};
+
+interface IFileEvent {
+	file: TFile;
+	event_name: string;
 }
 
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
+	fileHeap: MinHeap<IFileEvent> = new MinHeap<IFileEvent>(
+		(e) => e.file.stat.mtime,
+	);
+	maxTimestamp: number;
 
 	async onload() {
 		await this.loadSettings();
+		this.maxTimestamp = await this.loadTimestamp();
 
 		// // This creates an icon in the left ribbon.
 		// const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
@@ -88,71 +88,157 @@ export default class MyPlugin extends Plugin {
 		// // When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		// this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
 
-		let chain = Promise.resolve();
-
-		const postFile = (file: TFile) => {
-			if (file.extension !== "md") {
-				return;
-			}
-			chain = chain.then(async () => {
-				try {
-					await sleep(1000);
-					const content = await this.app.vault.cachedRead(file);
-					await fetch("https://api2.lifedash.link/webhook/obsidian", {
-						method: "POST",
-						mode: "no-cors",
-						body: JSON.stringify({
-							path: file.path,
-							content: content
-						})
-					});
-				} catch (e) {
-					// do nothing
-				}
-			});
-		}
-
 		const handleCreate = (file: TAbstractFile) => {
 			console.log(`created a new file: ${file.path}`);
 			if (file instanceof TFile) {
-				postFile(file);
+				this.fileHeap.insert({ file, event_name: "create" });
 			}
-		}
+		};
 
 		const handleModify = (file: TAbstractFile) => {
+			// note this also gets called when a file is created
 			console.log(`modified file: ${file.path}`);
 			if (file instanceof TFile) {
-				postFile(file);
+				this.fileHeap.insert({ file, event_name: "modify" });
+			}
+		};
+
+		this.app.workspace.onLayoutReady(() => {
+			this.postFileLoop();
+		});
+
+		this.registerEvent(this.app.vault.on("create", handleCreate));
+
+		this.registerEvent(this.app.vault.on("modify", handleModify));
+
+		this.registerEvent(
+			this.app.vault.on("delete", (file: TAbstractFile) => {
+				console.log(`deleted file: ${file.path}`);
+				// TODO: send to server
+			}),
+		);
+
+		this.registerEvent(
+			this.app.vault.on(
+				"rename",
+				(file: TAbstractFile, oldPath: string) => {
+					console.log(`renamed file: ${file.path} from ${oldPath}`);
+					// TODO: send to server
+				},
+			),
+		);
+	}
+
+	async postFileLoop() {
+		// eslint-disable-next-line no-constant-condition
+		while (true) {
+			const fileEvent = this.fileHeap.pop();
+			if (fileEvent) {
+				const { file, event_name } = fileEvent;
+				if (file.stat.mtime >= this.maxTimestamp) {
+					await this.postFile(file, event_name);
+					await this.updateTimestamp(file.stat.mtime);
+				}
+			} else {
+				await sleep(1000);
 			}
 		}
-
-		// this.app.workspace.onLayoutReady(() => {
-
-		// });
-
-		this.registerEvent(this.app.vault.on('create', handleCreate));
-
-		this.registerEvent(this.app.vault.on('modify', handleModify));
-
-		this.registerEvent(this.app.vault.on('delete', (file: TAbstractFile) => {
-			console.log(`deleted file: ${file.path}`);
-		}));
-
-		this.registerEvent(this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
-			console.log(`renamed file: ${file.path} from ${oldPath}`);
-		}));
 	}
 
-	onunload() {
-
+	async postFile(file: TFile, event_name: string) {
+		if (file.extension !== "md") {
+			return;
+		}
+		try {
+			const content = await this.app.vault.cachedRead(file);
+			// TODO: maybe get maxTimestamp from server
+			await fetch("https://api2.lifedash.link/webhook/obsidian", {
+				method: "POST",
+				mode: "no-cors",
+				body: JSON.stringify({
+					path: file.path,
+					content: content,
+					ctime: file.stat.ctime,
+					mtime: file.stat.mtime,
+					vault: this.app.vault.getName(),
+					event_name: event_name,
+				}),
+			});
+		} catch (e) {
+			// do nothing
+		}
 	}
+
+	private async loadTimestamp() {
+		// TODO: subfolder like "data"
+		const jsonContents = await this.loadFile("timestamp.json");
+		if (jsonContents) {
+			// TODO: zod
+			const data = JSON.parse(jsonContents);
+			console.log(data);
+			return data.timestamp;
+		}
+		return 0;
+	}
+
+	onunload() {}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			await this.loadData(),
+		);
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	async storeFile(fileName: string, content: string) {
+		// Store a file in the plugin's folder
+
+		// Get the plugin's folder path
+		const pluginFolderPath = normalizePath(
+			this.app.vault.configDir + "/plugins/" + this.manifest.id,
+		);
+
+		// Ensure the plugin folder exists
+		await this.app.vault.adapter.mkdir(pluginFolderPath);
+
+		// Create the file path
+		const filePath = normalizePath(pluginFolderPath + "/" + fileName);
+
+		// Write the file
+		await this.app.vault.adapter.write(filePath, content);
+	}
+
+	async loadFile(fileName: string) {
+		// Load a file from the plugin's folder
+
+		// Get the plugin's folder path
+		const pluginFolderPath = normalizePath(
+			this.app.vault.configDir + "/plugins/" + this.manifest.id,
+		);
+
+		// Create the file path
+		const filePath = normalizePath(pluginFolderPath + "/" + fileName);
+
+		if (!(await this.app.vault.adapter.exists(filePath))) {
+			// File doesn't exist
+			return;
+		}
+
+		// Read the file
+		return this.app.vault.adapter.read(filePath);
+	}
+
+	async updateTimestamp(mtime: number) {
+		this.maxTimestamp = Math.max(this.maxTimestamp, mtime);
+		await this.storeFile(
+			"timestamp.json",
+			JSON.stringify({ timestamp: this.maxTimestamp + 1 }),
+		);
 	}
 }
 
