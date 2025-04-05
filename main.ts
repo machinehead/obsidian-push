@@ -1,31 +1,38 @@
-import { normalizePath, Plugin, TAbstractFile, TFile } from "obsidian";
-import { MinHeap } from "@datastructures-js/heap";
+import {
+	App,
+	normalizePath,
+	Plugin,
+	PluginSettingTab,
+	Setting,
+	TAbstractFile,
+	TFile,
+} from "obsidian";
+import { FileTracker } from "./src/file_tracker";
+import { setBaseUrl } from "./src/api/custom-fetch";
 
 // Remember to rename these classes and interfaces!
 
 interface MyPluginSettings {
-	mySetting: string;
+	secretKey: string;
+	baseUrl: string;
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: "default",
+	secretKey: "default",
+	baseUrl: "http://localhost:4002",
 };
 
-interface IFileEvent {
-	file: TFile;
-	event_name: string;
-}
-
-export default class MyPlugin extends Plugin {
+export default class ObsidianPushPlugin extends Plugin {
 	settings: MyPluginSettings;
-	fileHeap: MinHeap<IFileEvent> = new MinHeap<IFileEvent>(
-		(e) => e.file.stat.mtime,
-	);
 	maxTimestamp: number;
+	fileTracker = new FileTracker(this);
+	layoutReady = false;
 
 	async onload() {
 		await this.loadSettings();
+		setBaseUrl(this.settings.baseUrl);
 		this.maxTimestamp = await this.loadTimestamp();
+		this.fileTracker.setMaxTimestamp(this.maxTimestamp);
 
 		// // This creates an icon in the left ribbon.
 		// const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
@@ -75,46 +82,55 @@ export default class MyPlugin extends Plugin {
 		// 		}
 		// 	}
 		// });
-		//
-		// // This adds a settings tab so the user can configure various aspects of the plugin
-		// this.addSettingTab(new SampleSettingTab(this.app, this));
-		//
+
+		// This adds a settings tab so the user can configure various aspects of the plugin
+		this.addSettingTab(new MainSettingTab(this.app, this));
+
 		// // If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
 		// // Using this function will automatically remove the event listener when this plugin is disabled.
 		// this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
 		// 	console.log('click', evt);
 		// });
 		//
+
+		// TODO: probably need to use this:
 		// // When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		// this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
 
 		const handleCreate = (file: TAbstractFile) => {
-			console.log(`created a new file: ${file.path}`);
+			// note this also gets called on Obsidian startup
 			if (file instanceof TFile) {
-				this.fileHeap.insert({ file, event_name: "create" });
+				if (this.layoutReady) {
+					this.fileTracker.onCreate(file);
+				} else {
+					this.fileTracker.registerFile(file);
+				}
 			}
 		};
+		this.registerEvent(this.app.vault.on("create", handleCreate));
 
 		const handleModify = (file: TAbstractFile) => {
 			// note this also gets called when a file is created
-			console.log(`modified file: ${file.path}`);
+			// console.log(`modified file: ${file.path}`);
+			// console.log(
+			// 	`active editor file path: ${this.app.workspace.activeEditor?.file?.path}`,
+			// );
 			if (file instanceof TFile) {
-				this.fileHeap.insert({ file, event_name: "modify" });
+				this.fileTracker.onModify(file);
 			}
 		};
+		this.registerEvent(this.app.vault.on("modify", handleModify));
 
 		this.app.workspace.onLayoutReady(() => {
-			this.postFileLoop();
+			this.layoutReady = true;
+			this.fileTracker.startSendLoop();
 		});
-
-		this.registerEvent(this.app.vault.on("create", handleCreate));
-
-		this.registerEvent(this.app.vault.on("modify", handleModify));
 
 		this.registerEvent(
 			this.app.vault.on("delete", (file: TAbstractFile) => {
-				console.log(`deleted file: ${file.path}`);
-				// TODO: send to server
+				if (file instanceof TFile) {
+					this.fileTracker.onDelete(file);
+				}
 			}),
 		);
 
@@ -122,51 +138,12 @@ export default class MyPlugin extends Plugin {
 			this.app.vault.on(
 				"rename",
 				(file: TAbstractFile, oldPath: string) => {
-					console.log(`renamed file: ${file.path} from ${oldPath}`);
-					// TODO: send to server
+					if (file instanceof TFile) {
+						this.fileTracker.onRename(file, oldPath);
+					}
 				},
 			),
 		);
-	}
-
-	async postFileLoop() {
-		// eslint-disable-next-line no-constant-condition
-		while (true) {
-			const fileEvent = this.fileHeap.pop();
-			if (fileEvent) {
-				const { file, event_name } = fileEvent;
-				if (file.stat.mtime >= this.maxTimestamp) {
-					await this.postFile(file, event_name);
-					await this.updateTimestamp(file.stat.mtime);
-				}
-			} else {
-				await sleep(1000);
-			}
-		}
-	}
-
-	async postFile(file: TFile, event_name: string) {
-		if (file.extension !== "md") {
-			return;
-		}
-		try {
-			const content = await this.app.vault.cachedRead(file);
-			// TODO: maybe get maxTimestamp from server
-			await fetch("https://api2.lifedash.link/webhook/obsidian", {
-				method: "POST",
-				mode: "no-cors",
-				body: JSON.stringify({
-					path: file.path,
-					content: content,
-					ctime: file.stat.ctime,
-					mtime: file.stat.mtime,
-					vault: this.app.vault.getName(),
-					event_name: event_name,
-				}),
-			});
-		} catch (e) {
-			// do nothing
-		}
 	}
 
 	private async loadTimestamp() {
@@ -175,7 +152,7 @@ export default class MyPlugin extends Plugin {
 		if (jsonContents) {
 			// TODO: zod
 			const data = JSON.parse(jsonContents);
-			console.log(data);
+			console.log("timestamp file", data);
 			return data.timestamp;
 		}
 		return 0;
@@ -235,10 +212,16 @@ export default class MyPlugin extends Plugin {
 
 	async updateTimestamp(mtime: number) {
 		this.maxTimestamp = Math.max(this.maxTimestamp, mtime);
+		// TODO: consider storing outside of plugin folder since removing plugin
+		//  will remove this file
 		await this.storeFile(
 			"timestamp.json",
 			JSON.stringify({ timestamp: this.maxTimestamp + 1 }),
 		);
+	}
+
+	isNewerThanTimestamp(mtime: number) {
+		return mtime > this.maxTimestamp;
 	}
 }
 
@@ -258,28 +241,43 @@ export default class MyPlugin extends Plugin {
 // 	}
 // }
 
-// class SampleSettingTab extends PluginSettingTab {
-// 	plugin: MyPlugin;
-//
-// 	constructor(app: App, plugin: MyPlugin) {
-// 		super(app, plugin);
-// 		this.plugin = plugin;
-// 	}
-//
-// 	display(): void {
-// 		const {containerEl} = this;
-//
-// 		containerEl.empty();
-//
-// 		new Setting(containerEl)
-// 			.setName('Setting #1')
-// 			.setDesc('It\'s a secret')
-// 			.addText(text => text
-// 				.setPlaceholder('Enter your secret')
-// 				.setValue(this.plugin.settings.mySetting)
-// 				.onChange(async (value) => {
-// 					this.plugin.settings.mySetting = value;
-// 					await this.plugin.saveSettings();
-// 				}));
-// 	}
-// }
+class MainSettingTab extends PluginSettingTab {
+	plugin: ObsidianPushPlugin;
+
+	constructor(app: App, plugin: ObsidianPushPlugin) {
+		super(app, plugin);
+		this.plugin = plugin;
+	}
+
+	display(): void {
+		const { containerEl } = this;
+
+		containerEl.empty();
+
+		new Setting(containerEl)
+			.setName("Secret key")
+			.setDesc("It's a secret")
+			.addText((text) =>
+				text
+					.setPlaceholder("Enter your secret")
+					.setValue(this.plugin.settings.secretKey)
+					.onChange(async (value) => {
+						this.plugin.settings.secretKey = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Host URL")
+			.setDesc("Target host URL")
+			.addText((text) =>
+				text
+					// .setPlaceholder("Enter your secret")
+					.setValue(this.plugin.settings.baseUrl)
+					.onChange(async (value) => {
+						this.plugin.settings.baseUrl = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+	}
+}
