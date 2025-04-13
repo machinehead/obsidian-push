@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-push",
-	"version": "1.0.2",
+	"version": "1.0.3",
 	"description": "This is an Obsidian plugin pushing updates into lifedash.link",
 	"main": "main.js",
 	"scripts": {
