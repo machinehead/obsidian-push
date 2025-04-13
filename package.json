@@ -1,9 +1,10 @@
 {
 	"name": "obsidian-push",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"description": "This is an Obsidian plugin pushing updates into lifedash.link",
 	"main": "main.js",
 	"scripts": {
+		"gen-api": "orval --config ./orval.config.ts",
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
@@ -21,6 +22,7 @@
 		"husky": "^9.1.7",
 		"lint-staged": "^15.2.10",
 		"obsidian": "latest",
+		"orval": "^7.8.0",
 		"prettier": "3.4.2",
 		"tslib": "2.4.0",
 		"typescript": "4.7.4"
