@@ -15,24 +15,23 @@ import { setBaseUrl } from "./src/api/custom-fetch";
 interface MyPluginSettings {
 	secretKey: string;
 	baseUrl: string;
+	maxTimestamp: number;
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
 	secretKey: "default",
 	baseUrl: "http://localhost:4002",
+	maxTimestamp: 0,
 };
 
 export default class ObsidianPushPlugin extends Plugin {
 	settings: MyPluginSettings;
-	maxTimestamp: number;
 	fileTracker = new FileTracker(this);
 	layoutReady = false;
 
 	async onload() {
 		await this.loadSettings();
 		setBaseUrl(this.settings.baseUrl);
-		this.maxTimestamp = await this.loadTimestamp();
-		this.fileTracker.setMaxTimestamp(this.maxTimestamp);
 
 		// // This creates an icon in the left ribbon.
 		// const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
@@ -146,17 +145,17 @@ export default class ObsidianPushPlugin extends Plugin {
 		);
 	}
 
-	private async loadTimestamp() {
-		// TODO: subfolder like "data"
-		const jsonContents = await this.loadFile("timestamp.json");
-		if (jsonContents) {
-			// TODO: zod
-			const data = JSON.parse(jsonContents);
-			console.log("timestamp file", data);
-			return data.timestamp;
-		}
-		return 0;
-	}
+	// private async loadTimestamp() {
+	// 	// TODO: subfolder like "data"
+	// 	const jsonContents = await this.loadFile("timestamp.json");
+	// 	if (jsonContents) {
+	// 		// TODO: zod
+	// 		const data = JSON.parse(jsonContents);
+	// 		console.log("timestamp file", data);
+	// 		return data.timestamp;
+	// 	}
+	// 	return 0;
+	// }
 
 	onunload() {}
 
@@ -172,56 +171,60 @@ export default class ObsidianPushPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	async storeFile(fileName: string, content: string) {
-		// Store a file in the plugin's folder
-
-		// Get the plugin's folder path
-		const pluginFolderPath = normalizePath(
-			this.app.vault.configDir + "/plugins/" + this.manifest.id,
-		);
-
-		// Ensure the plugin folder exists
-		await this.app.vault.adapter.mkdir(pluginFolderPath);
-
-		// Create the file path
-		const filePath = normalizePath(pluginFolderPath + "/" + fileName);
-
-		// Write the file
-		await this.app.vault.adapter.write(filePath, content);
-	}
-
-	async loadFile(fileName: string) {
-		// Load a file from the plugin's folder
-
-		// Get the plugin's folder path
-		const pluginFolderPath = normalizePath(
-			this.app.vault.configDir + "/plugins/" + this.manifest.id,
-		);
-
-		// Create the file path
-		const filePath = normalizePath(pluginFolderPath + "/" + fileName);
-
-		if (!(await this.app.vault.adapter.exists(filePath))) {
-			// File doesn't exist
-			return;
-		}
-
-		// Read the file
-		return this.app.vault.adapter.read(filePath);
-	}
+	// async storeFile(fileName: string, content: string) {
+	// 	// Store a file in the plugin's folder
+	//
+	// 	// Get the plugin's folder path
+	// 	const pluginFolderPath = normalizePath(
+	// 		this.app.vault.configDir + "/plugins/" + this.manifest.id,
+	// 	);
+	//
+	// 	// Ensure the plugin folder exists
+	// 	await this.app.vault.adapter.mkdir(pluginFolderPath);
+	//
+	// 	// Create the file path
+	// 	const filePath = normalizePath(pluginFolderPath + "/" + fileName);
+	//
+	// 	// Write the file
+	// 	await this.app.vault.adapter.write(filePath, content);
+	// }
+	//
+	// async loadFile(fileName: string) {
+	// 	// Load a file from the plugin's folder
+	//
+	// 	// Get the plugin's folder path
+	// 	const pluginFolderPath = normalizePath(
+	// 		this.app.vault.configDir + "/plugins/" + this.manifest.id,
+	// 	);
+	//
+	// 	// Create the file path
+	// 	const filePath = normalizePath(pluginFolderPath + "/" + fileName);
+	//
+	// 	if (!(await this.app.vault.adapter.exists(filePath))) {
+	// 		// File doesn't exist
+	// 		return;
+	// 	}
+	//
+	// 	// Read the file
+	// 	return this.app.vault.adapter.read(filePath);
+	// }
 
 	async updateTimestamp(mtime: number) {
-		this.maxTimestamp = Math.max(this.maxTimestamp, mtime);
+		this.settings.maxTimestamp = Math.max(
+			this.settings.maxTimestamp,
+			mtime,
+		);
 		// TODO: consider storing outside of plugin folder since removing plugin
 		//  will remove this file
-		await this.storeFile(
-			"timestamp.json",
-			JSON.stringify({ timestamp: this.maxTimestamp + 1 }),
-		);
+		// await this.storeFile(
+		// 	"timestamp.json",
+		// 	JSON.stringify({ timestamp: this.maxTimestamp + 1 }),
+		// );
+		await this.saveSettings();
 	}
 
 	isNewerThanTimestamp(mtime: number) {
-		return mtime > this.maxTimestamp;
+		return mtime > this.settings.maxTimestamp;
 	}
 }
 

@@ -33,16 +33,11 @@ class FileHandler {
 export class FileTracker {
 	plugin: ObsidianPushPlugin;
 	fileHandlers = new Map<string, FileHandler>();
-	maxTimestamp = 0;
 	sendQueue: MinHeap<IFileEvent> = new MinHeap<IFileEvent>(
 		(e) => e.file.stat.mtime,
 	);
 	constructor(plugin: ObsidianPushPlugin) {
 		this.plugin = plugin;
-	}
-
-	setMaxTimestamp(maxTimestamp: number) {
-		this.maxTimestamp = maxTimestamp;
 	}
 
 	registerFile(file: TFile): void {
